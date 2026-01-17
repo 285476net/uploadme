@@ -20,14 +20,15 @@ config_col = db['settings']    # Collection Name
 backup_logs = db['backup_logs'] # Backup လုပ်ပြီးသား ID တွေမှတ်ဖို့ Collection အသစ်
 
 # ==========================================
-# BACKUP LOGIC (NEW FEATURE)
+# ==========================================
+# BACKUP LOGIC (UPDATED & FIXED)
 # ==========================================
 
 def is_already_backed_up(source_chat_id, target_chat_id, message_id):
     """Source ရော Target ရော တူမှ Duplicate လို့ သတ်မှတ်မည်"""
     return backup_logs.find_one({
         "source_chat": str(source_chat_id), 
-        "target_chat": str(target_chat_id), # Target ID ပါ ထည့်စစ်မည်
+        "target_chat": str(target_chat_id), 
         "msg_id": message_id
     })
 
@@ -45,10 +46,9 @@ def start_backup(message):
     if message.from_user.id != ADMIN_ID: return
 
     try:
-        # Command Format: /backup -100SOURCE_ID -100TARGET_ID START_ID END_ID
         parts = message.text.split()
         if len(parts) < 5:
-            bot.reply_to(message, "⚠️ Usage: `/backup [SourceID] [TargetID] [StartMsgID] [EndMsgID]`\n\nExample:\n`/backup -100123 -100456 1 500`", parse_mode="Markdown")
+            bot.reply_to(message, "⚠️ Usage: `/backup [SourceID] [TargetID] [StartID] [EndID]`")
             return
 
         source_chat = parts[1]
@@ -56,78 +56,71 @@ def start_backup(message):
         start_id = int(parts[3])
         end_id = int(parts[4])
 
-        status_msg = bot.reply_to(message, "🚀 Backup စတင်နေပါပြီ... ခဏစောင့်ပါ။")
+        status_msg = bot.reply_to(message, "🚀 Backup Process စတင်ပါပြီ...")
         
         success_count = 0
         fail_count = 0
         skip_count = 0
         failed_ids = []
 
-        # Custom Caption ယူရန်
         custom_txt = current_config.get('custom_caption')
 
         for msg_id in range(start_id, end_id + 1):
-            # Duplicate Check
-            if is_already_backed_up(source_chat, msg_id):
+            # FIXED: Argument 3 ခုလုံး ထည့်စစ်သည်
+            if is_already_backed_up(source_chat, target_chat, msg_id):
                 skip_count += 1
                 continue
 
             try:
                 # Message ကူးယူခြင်း
-                # Caption logic က လက်ရှိ code အတိုင်းပဲ သုံးပေးထားတယ်
                 copied_msg = bot.copy_message(
                     chat_id=target_chat,
                     from_chat_id=source_chat,
                     message_id=msg_id
                 )
                 
-                # အကယ်၍ Custom Caption ရှိနေရင် Caption ကို Update ပြန်လုပ်ပေးမယ်
+                # Custom Caption Update (ရှိလျှင်)
                 if custom_txt:
-                    bot.edit_message_caption(
-                        chat_id=target_chat,
-                        message_id=copied_msg.message_id,
-                        caption=custom_txt # ဒီမှာ လိုအပ်ရင် original caption နဲ့ ပေါင်းစပ်ဖို့ ပြင်နိုင်တယ်
-                    )
+                    try:
+                        bot.edit_message_caption(
+                            chat_id=target_chat,
+                            message_id=copied_msg.message_id,
+                            caption=custom_txt
+                        )
+                    except: pass # Caption မရှိတဲ့ message မျိုးဆိုရင် ကျော်သွားမယ်
 
-                log_backup(source_chat, msg_id)
+                # FIXED: log_backup ခေါ်ယူပုံ
+                log_backup(source_chat, target_chat, msg_id)
                 success_count += 1
                 
-                # ၅ ပုဒ်တိုင်းတစ်ခါ Report Update ပေးမယ် (Admin သိအောင်)
                 if success_count % 5 == 0:
                     bot.edit_message_text(
-                        f"🔄 Progress: {msg_id - start_id + 1}/{end_id - start_id + 1}\n✅ Success: {success_count}\n⏭ Skip: {skip_count}",
+                        f"🔄 Progress: {msg_id - start_id + 1}/{end_id - start_id + 1}\n✅ Done: {success_count} | ⏭ Skip: {skip_count}",
                         chat_id=message.chat.id,
                         message_id=status_msg.message_id
                     )
                 
-                time.sleep(2) # Flood limit မမိအောင်
+                time.sleep(1.5) # Speed အနည်းငယ်တင်ထားသည်
 
             except Exception as e:
-                # Message မရှိတာ သို့မဟုတ် တခြား Error
                 fail_count += 1
                 failed_ids.append(str(msg_id))
-                time.sleep(1)
 
-        # Final Report
-        report = (
-            f"📊 **Backup Final Report**\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"📥 Total Range: {end_id - start_id + 1}\n"
+        # Final Summary
+        final_text = (
+            f"📊 **Backup Result**\n"
             f"✅ Success: {success_count}\n"
-            f"⏭ Duplicates Skipped: {skip_count}\n"
-            f"❌ Failed/Missing: {fail_count}\n"
+            f"⏭ Skipped (Dup): {skip_count}\n"
+            f"❌ Failed: {fail_count}"
         )
-        
-        bot.send_message(message.chat.id, report, parse_mode="Markdown")
+        bot.send_message(message.chat.id, final_text, parse_mode="Markdown")
         
         if failed_ids:
-            # Error တက်တဲ့ ID တွေကို list အနေနဲ့ ပြန်ပြပေးမယ်
-            error_list = ", ".join(failed_ids[:50]) # အများကြီးဖြစ်မှာစိုးလို့ ၅၀ ခုပဲပြမယ်
-            bot.send_message(message.chat.id, f"⚠️ **Error တက်ခဲ့သော Message IDs:**\n`{error_list}`", parse_mode="Markdown")
+            bot.send_message(message.chat.id, f"⚠️ **Error IDs:** `{', '.join(failed_ids[:30])}`")
 
     except Exception as e:
         bot.reply_to(message, f"❌ Backup Error: {e}")
-
+        
 @bot.message_handler(commands=['clearlogs'])
 def clear_backup_logs(message):
     """Duplicate စစ်တဲ့ data တွေကို ဖျက်ထုတ်ချင်ရင် သုံးဖို့"""
@@ -521,6 +514,7 @@ if __name__ == "__main__":
     keep_alive()
     print("🤖 Bot Started with MongoDB Support...")
     bot.infinity_polling()
+
 
 
 
