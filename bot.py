@@ -22,12 +22,10 @@ backup_logs = db['backup_logs'] # Backup လုပ်ပြီးသား ID �
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ==========================================
-# ==========================================
-# BACKUP LOGIC (UPDATED & FIXED)
+# BACKUP LOGIC (WITH RETRY & STABILITY)
 # ==========================================
 
 def is_already_backed_up(source_chat_id, target_chat_id, message_id):
-    """Source ရော Target ရော တူမှ Duplicate လို့ သတ်မှတ်မည်"""
     return backup_logs.find_one({
         "source_chat": str(source_chat_id), 
         "target_chat": str(target_chat_id), 
@@ -35,7 +33,6 @@ def is_already_backed_up(source_chat_id, target_chat_id, message_id):
     })
 
 def log_backup(source_chat_id, target_chat_id, message_id):
-    """မှတ်တမ်းတင်တဲ့အခါ Target ID ပါ သိမ်းမည်"""
     backup_logs.insert_one({
         "source_chat": str(source_chat_id), 
         "target_chat": str(target_chat_id), 
@@ -65,16 +62,18 @@ def start_backup(message):
         skip_count = 0
         failed_ids = []
 
-        custom_txt = current_config.get('custom_caption')
+        # DB မှ current config ယူရန်
+        cfg = config_col.find_one({"_id": "bot_config"})
+        custom_txt = cfg.get('custom_caption') if cfg else None
 
         for msg_id in range(start_id, end_id + 1):
-            # FIXED: Argument 3 ခုလုံး ထည့်စစ်သည်
             if is_already_backed_up(source_chat, target_chat, msg_id):
                 skip_count += 1
                 continue
 
             success = False
-            for attempt in range(3): # ၃ ကြိမ်အထိ ပြန်ကြိုးစားမယ်
+            # RETRY LOGIC: ၃ ကြိမ်အထိ ပြန်ကြိုးစားမည်
+            for attempt in range(3):
                 try:
                     copied_msg = bot.copy_message(
                         chat_id=target_chat,
@@ -82,7 +81,6 @@ def start_backup(message):
                         message_id=msg_id
                     )
                     
-                    # အောင်မြင်ရင် Caption Update လုပ်မယ်
                     if custom_txt:
                         try:
                             bot.edit_message_caption(
@@ -95,25 +93,27 @@ def start_backup(message):
                     log_backup(source_chat, target_chat, msg_id)
                     success_count += 1
                     success = True
-                    break # အောင်မြင်သွားရင် retry loop ထဲက ထွက်မယ်
+                    break 
 
                 except Exception as e:
-                    # Connection ပြတ်တာ သို့မဟုတ် Telegram error တက်ရင် ခဏစောင့်မယ်
                     if attempt < 2:
-                        time.sleep(5) # ၅ စက္ကန့်စောင့်ပြီး ပြန်ကြိုးစားမယ်
+                        time.sleep(5) # Connection ပြတ်လျှင် ၅ စက္ကန့်နားပြီး ပြန်စမ်းမည်
                     else:
                         fail_count += 1
                         failed_ids.append(str(msg_id))
-            
-            # Message တစ်ခုနဲ့တစ်ခုကြား ပုံမှန်နားချိန်
+
             if success:
-                time.sleep(2) # Connection aborted ထပ်မဖြစ်အောင် ၂ စက္ကန့်ထားပေးပါ
+                time.sleep(2.5) # Stability အတွက် နားချိန်ပိုပေးထားသည်
+            
+            if (success_count + skip_count + fail_count) % 5 == 0:
+                try:
+                    bot.edit_message_text(
+                        f"🔄 Progress: {msg_id - start_id + 1}/{end_id - start_id + 1}\n✅ Done: {success_count} | ⏭ Skip: {skip_count}",
+                        chat_id=message.chat.id,
+                        message_id=status_msg.message_id
+                    )
+                except: pass
 
-            except Exception as e:
-                fail_count += 1
-                failed_ids.append(str(msg_id))
-
-        # Final Summary
         final_text = (
             f"📊 **Backup Result**\n"
             f"✅ Success: {success_count}\n"
@@ -519,6 +519,7 @@ if __name__ == "__main__":
     keep_alive()
     print("🤖 Bot Started with MongoDB Support...")
     bot.infinity_polling()
+
 
 
 
