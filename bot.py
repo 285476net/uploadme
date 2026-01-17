@@ -13,6 +13,8 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID'))
 MONGO_URL = os.getenv('MONGO_URL')
 
+bot = telebot.TeleBot(BOT_TOKEN)
+
 # MongoDB Connection
 client = MongoClient(MONGO_URL)
 db = client['telegram_bot_db'] # Database Name
@@ -127,8 +129,6 @@ def clear_backup_logs(message):
     if message.from_user.id != ADMIN_ID: return
     backup_logs.delete_many({})
     bot.reply_to(message, "🗑 Backup logs have been cleared.")
-
-bot = telebot.TeleBot(BOT_TOKEN)
 
 # ==========================================
 # DATABASE HELPER FUNCTIONS
@@ -514,6 +514,7 @@ if __name__ == "__main__":
     keep_alive()
     print("🤖 Bot Started with MongoDB Support...")
     bot.infinity_polling()
+
 
 
 
