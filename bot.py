@@ -73,36 +73,41 @@ def start_backup(message):
                 skip_count += 1
                 continue
 
-            try:
-                # Message ကူးယူခြင်း
-                copied_msg = bot.copy_message(
-                    chat_id=target_chat,
-                    from_chat_id=source_chat,
-                    message_id=msg_id
-                )
-                
-                # Custom Caption Update (ရှိလျှင်)
-                if custom_txt:
-                    try:
-                        bot.edit_message_caption(
-                            chat_id=target_chat,
-                            message_id=copied_msg.message_id,
-                            caption=custom_txt
-                        )
-                    except: pass # Caption မရှိတဲ့ message မျိုးဆိုရင် ကျော်သွားမယ်
-
-                # FIXED: log_backup ခေါ်ယူပုံ
-                log_backup(source_chat, target_chat, msg_id)
-                success_count += 1
-                
-                if success_count % 5 == 0:
-                    bot.edit_message_text(
-                        f"🔄 Progress: {msg_id - start_id + 1}/{end_id - start_id + 1}\n✅ Done: {success_count} | ⏭ Skip: {skip_count}",
-                        chat_id=message.chat.id,
-                        message_id=status_msg.message_id
+            success = False
+            for attempt in range(3): # ၃ ကြိမ်အထိ ပြန်ကြိုးစားမယ်
+                try:
+                    copied_msg = bot.copy_message(
+                        chat_id=target_chat,
+                        from_chat_id=source_chat,
+                        message_id=msg_id
                     )
-                
-                time.sleep(1.5) # Speed အနည်းငယ်တင်ထားသည်
+                    
+                    # အောင်မြင်ရင် Caption Update လုပ်မယ်
+                    if custom_txt:
+                        try:
+                            bot.edit_message_caption(
+                                chat_id=target_chat,
+                                message_id=copied_msg.message_id,
+                                caption=custom_txt
+                            )
+                        except: pass
+
+                    log_backup(source_chat, target_chat, msg_id)
+                    success_count += 1
+                    success = True
+                    break # အောင်မြင်သွားရင် retry loop ထဲက ထွက်မယ်
+
+                except Exception as e:
+                    # Connection ပြတ်တာ သို့မဟုတ် Telegram error တက်ရင် ခဏစောင့်မယ်
+                    if attempt < 2:
+                        time.sleep(5) # ၅ စက္ကန့်စောင့်ပြီး ပြန်ကြိုးစားမယ်
+                    else:
+                        fail_count += 1
+                        failed_ids.append(str(msg_id))
+            
+            # Message တစ်ခုနဲ့တစ်ခုကြား ပုံမှန်နားချိန်
+            if success:
+                time.sleep(2) # Connection aborted ထပ်မဖြစ်အောင် ၂ စက္ကန့်ထားပေးပါ
 
             except Exception as e:
                 fail_count += 1
@@ -514,6 +519,7 @@ if __name__ == "__main__":
     keep_alive()
     print("🤖 Bot Started with MongoDB Support...")
     bot.infinity_polling()
+
 
 
 
