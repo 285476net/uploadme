@@ -14,7 +14,7 @@ ADMIN_ID = int(os.getenv('ADMIN_ID'))
 MONGO_URL = os.getenv('MONGO_URL')
 
 # MongoDB Connection
-client = MongoClient(MONGO_URL)
+client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)
 db = client['telegram_bot_db'] # Database Name
 config_col = db['settings']    # Collection Name
 backup_logs = db['backup_logs'] # Backup လုပ်ပြီးသား ID တွေမှတ်ဖို့ Collection အသစ်
@@ -73,29 +73,35 @@ def start_backup(message):
 
             success = False
             # RETRY LOGIC: ၃ ကြိမ်အထိ ပြန်ကြိုးစားမည်
+            # RETRY LOGIC: ၃ ကြိမ်အထိ ပြန်ကြိုးစားမည်
             for attempt in range(3):
                 try:
-                    copied_msg = bot.copy_message(
+                    # Caption ကို တစ်ခါတည်း သတ်မှတ်ပေးလိုက်ခြင်း
+                    bot.copy_message(
                         chat_id=target_chat,
                         from_chat_id=source_chat,
-                        message_id=msg_id
+                        message_id=msg_id,
+                        caption=custom_txt if custom_txt else None
                     )
-                    
-                    if custom_txt:
-                        try:
-                            bot.edit_message_caption(
-                                chat_id=target_chat,
-                                message_id=copied_msg.message_id,
-                                caption=custom_txt
-                            )
-                        except: pass
 
                     log_backup(source_chat, target_chat, msg_id)
                     success_count += 1
                     success = True
                     break 
 
-                except Exception as e:
+                print(f"Error: {e}")
+                    if attempt < 2:
+                        time.sleep(5) 
+                    else:
+                        fail_count += 1
+                        failed_ids.append(str(msg_id))
+
+                    log_backup(source_chat, target_chat, msg_id)
+                    success_count += 1
+                    success = True
+                    break 
+
+                print(f"Error: {e}")
                     if attempt < 2:
                         time.sleep(5) # Connection ပြတ်လျှင် ၅ စက္ကန့်နားပြီး ပြန်စမ်းမည်
                     else:
@@ -125,7 +131,7 @@ def start_backup(message):
         if failed_ids:
             bot.send_message(message.chat.id, f"⚠️ **Error IDs:** `{', '.join(failed_ids[:30])}`")
 
-    except Exception as e:
+    print(f"Error: {e}")
         bot.reply_to(message, f"❌ Backup Error: {e}")
         
 @bot.message_handler(commands=['clearlogs'])
@@ -221,7 +227,7 @@ def set_channel(message):
             bot.reply_to(message, f"✅ Database Saved! Target Channel changed to `{new_id}`")
         else:
             bot.reply_to(message, "⚠️ Usage: `/setchannel -100xxxxxxx`")
-    except Exception as e:
+    print(f"Error: {e}")
         bot.reply_to(message, f"❌ Error: {e}")
 
 @bot.message_handler(commands=['checkchannel'])
@@ -251,7 +257,7 @@ def check_channel(message):
             f"🆔 ID: `{channel_id}`\n"
             f"🔗 Link: [Click Here]({link})"
         )
-    except Exception as e:
+    print(f"Error: {e}")
         # Bot က Channel ထဲမှာ Admin မဟုတ်ရင် Detail ကြည့်လို့မရပါဘူး
         text = (
             f"📡 **Current ID:** `{channel_id}`\n\n"
@@ -388,7 +394,7 @@ def process_batch(chat_id):
                 )
                 success_count += 1 # အောင်မြင်မှုအရေအတွက်ပေါင်းရန်
                 time.sleep(3) # Telegram Flood limit မမိအောင် ၃ စက္ကန့်ခြားသည်
-            except Exception as e:
+            print(f"Error: {e}")
                 print(f"Error sending msg {msg.message_id}: {e}")
                 failed_messages.append(msg)
         
@@ -456,17 +462,16 @@ def receive_caption(message):
     if not file_info: return
 
     try:
-        custom_txt = current_config.get('custom_caption') # ပုံသေစာသားကို ယူသည်
+        custom_txt = current_config.get('custom_caption')
         
-        # Telegram ရဲ့ limit က 1024 characters ဖြစ်သည်
+        # User ပေးလိုက်တဲ့ စာသားနဲ့ ပုံသေစာသားကို ပေါင်းစပ်ခြင်း
         if custom_txt:
-            # Custom caption အတွက် နေရာဖယ်ပြီး ကျန်တာကိုပဲ original caption ထဲက ယူမည်
-            # '\n\n' (၂ လုံး) အတွက်ပါ ထည့်တွက်ထားသည်
-            max_input_len = 1024 - len(custom_txt) - 2
-            safe_input = user_input[:max_input_len]
-            final_caption = f"{safe_input}\n\n{custom_txt}"
+            final_caption = f"{user_input}\n\n{custom_txt}"
+            # 1024 characters ထက်ကျော်မသွားအောင် ဖြတ်ထုတ်ခြင်း
+            if len(final_caption) > 1024:
+                max_input_len = 1024 - len(custom_txt) - 4
+                final_caption = f"{user_input[:max_input_len]}...\n\n{custom_txt}"
         else:
-            # Custom caption မရှိရင် စာသား ၁၀၂၄ လုံးအထိပဲ ယူမည်
             final_caption = user_input[:1024]
 
         bot.copy_message(
@@ -476,7 +481,7 @@ def receive_caption(message):
             caption=final_caption
         )
         bot.reply_to(message, "✅ Channel သို့ ပို့ပြီးပါပြီ။")
-    except Exception as e:
+    print(f"Error: {e}")
         bot.reply_to(message, f"❌ Error: {e}")
     
     del pending_files[chat_id]
@@ -519,6 +524,7 @@ if __name__ == "__main__":
     keep_alive()
     print("🤖 Bot Started with MongoDB Support...")
     bot.infinity_polling()
+
 
 
 
