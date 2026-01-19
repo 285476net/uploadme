@@ -39,6 +39,9 @@ def get_user_config(user_id):
         return new_data
     return data
 
+def update_user_setting(user_id, field, value):
+    config_col.update_one({"_id": str(user_id)}, {"$set": {field: value}}, upsert=True)
+
 # BOT_TOKEN, ADMIN_ID တို့ရှိတဲ့နေရာအနီးမှာ ထည့်ပါ
 authorized_cache = set()
 
@@ -50,9 +53,6 @@ def load_authorized_users():
     authorized_cache = set(users)
     authorized_cache.add(ADMIN_ID) # Admin ကိုပါ ထည့်ထားရန်
     print(f"✅ Loaded {len(authorized_cache)} authorized users to cache.")
-
-def update_user_setting(user_id, field, value):
-    config_col.update_one({"_id": str(user_id)}, {"$set": {field: value}}, upsert=True)
 
 # ==========================================
 # BACKUP LOGIC (WITH USER_ID)
@@ -375,3 +375,4 @@ if __name__ == "__main__":
     keep_alive()
     print("🤖 Bot Started with MongoDB Support...")
     bot.infinity_polling()
+
