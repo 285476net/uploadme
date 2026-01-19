@@ -21,11 +21,11 @@ backup_logs = db['backup_logs']
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ==========================================
-# DATABASE HELPER FUNCTIONS (USER-BASED)
+# DATABASE HELPER FUNCTIONS
 # ==========================================
 
 def get_user_config(user_id):
-    """User တစ်ဦးချင်းစီအတွက် Setting ကို Database ကနေ ဆွဲယူရန်"""
+    """User တစ်ဦးချင်းစီအတွက် Setting ခွဲထုတ်ရန်"""
     data = config_col.find_one({"_id": str(user_id)})
     if not data:
         default_channel = os.getenv('TARGET_CHANNEL_ID')
@@ -40,15 +40,13 @@ def get_user_config(user_id):
     return data
 
 def update_user_setting(user_id, field, value):
-    """User တစ်ဦးချင်းစီရဲ့ field တွေကို Update လုပ်ရန်"""
     config_col.update_one({"_id": str(user_id)}, {"$set": {field: value}}, upsert=True)
 
 # ==========================================
-# BACKUP LOGIC (WITH USER_ID SUPPORT)
+# BACKUP LOGIC (WITH USER_ID)
 # ==========================================
 
 def is_already_backed_up(user_id, source_chat_id, target_chat_id, message_id):
-    """ကိုယ့် Log ထဲမှာပဲ စစ်ဆေးရန်"""
     return backup_logs.find_one({
         "user_id": str(user_id),
         "source_chat": str(source_chat_id), 
@@ -57,7 +55,6 @@ def is_already_backed_up(user_id, source_chat_id, target_chat_id, message_id):
     })
 
 def log_backup(user_id, source_chat_id, target_chat_id, message_id):
-    """Log မှတ်တဲ့အခါ user_id ပါ တွဲမှတ်ရန်"""
     backup_logs.insert_one({
         "user_id": str(user_id),
         "source_chat": str(source_chat_id), 
@@ -89,7 +86,7 @@ def start_backup(message):
         skip_count = 0
         failed_ids = []
 
-        # User-specific config ဆွဲယူခြင်း
+        # User settings ကို database မှ တိုက်ရိုက်ယူခြင်း
         cfg = get_user_config(user_id)
         custom_txt = cfg.get('custom_caption')
 
@@ -149,33 +146,29 @@ def clear_backup_logs(message):
     user_id = message.from_user.id
     parts = message.text.split()
     
-    # Admin ဖြစ်ပြီး User ID သတ်မှတ်ထားရင် အဲ့ဒီ User ရဲ့ log ကိုဖျက်မယ်
-    if user_id == ADMIN_ID and len(parts) == 2:
-        target_uid = parts[1]
-        backup_logs.delete_many({"user_id": str(target_uid)})
-        bot.reply_to(message, f"🗑 Backup logs for User `{target_uid}` have been cleared.")
-    # ပုံမှန် User ဆိုရင် ကိုယ့် log ကိုပဲ ဖျက်ခွင့်ပေးမယ်
+    # Admin က ID ပါတွဲပို့ရင် အဲ့ဒီ user ရဲ့ log ကိုပဲဖျက်မယ်
+    if user_id == ADMIN_ID:
+        if len(parts) == 2:
+            target_uid = parts[1]
+            backup_logs.delete_many({"user_id": str(target_uid)})
+            bot.reply_to(message, f"🗑 Backup logs for User `{target_uid}` cleared.")
+        else:
+            # ID မပါရင် မူရင်းအတိုင်း log အားလုံးကို ဖျက်မယ်
+            backup_logs.delete_many({})
+            bot.reply_to(message, "🗑 All backup logs have been cleared.")
     elif is_authorized(user_id):
+        # User ဆိုရင် ကိုယ့် log ကိုပဲ ဖျက်မယ်
         backup_logs.delete_many({"user_id": str(user_id)})
         bot.reply_to(message, "🗑 Your backup logs have been cleared.")
 
 # ==========================================
-# AUTH & CACHE LOGIC
-# ==========================================
-def is_authorized(user_id):
-    if user_id == ADMIN_ID: return True
-    # Admin မဟုတ်ရင် DB ကနေ User တစ်ဦးချင်းစီရဲ့ settings ထဲက authorized_users ကိုစစ်မယ်
-    cfg = get_user_config(ADMIN_ID) # Global Admin Settings ကနေ list ယူခြင်း
-    return user_id in cfg.get('authorized_users', [])
-
-# ==========================================
-# WEB SERVER (KEEPALIVE)
+# WEB SERVER
 # ==========================================
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot is Running with Multi-User MongoDB Support! 🤖"
+    return "Bot is Running! 🤖"
 
 def run_http():
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", 8080)))
@@ -185,8 +178,14 @@ def keep_alive():
     t.start()
 
 # ==========================================
-# ADMIN & USER COMMANDS
+# ADMIN & AUTH COMMANDS (Original Flow)
 # ==========================================
+
+def is_authorized(user_id):
+    if user_id == ADMIN_ID: return True
+    # Admin ဆီမှာပဲ Authorized User List ကို သိမ်းထားမယ်
+    admin_cfg = get_user_config(ADMIN_ID)
+    return user_id in admin_cfg.get('authorized_users', [])
 
 @bot.message_handler(commands=['setchannel'])
 def set_channel(message):
@@ -197,7 +196,7 @@ def set_channel(message):
         if len(parts) == 2:
             new_id = parts[1]
             update_user_setting(user_id, "channel_id", new_id)
-            bot.reply_to(message, f"✅ Target Channel changed to `{new_id}` for you.")
+            bot.reply_to(message, f"✅ Target Channel changed to `{new_id}`")
         else:
             bot.reply_to(message, "⚠️ Usage: `/setchannel -100xxxxxxx`")
     except Exception as e:
@@ -213,10 +212,37 @@ def check_channel(message):
         chat = bot.get_chat(channel_id)
         chat_title = chat.title
         link = f"https://t.me/c/{str(channel_id).replace('-100', '')}/1" if not chat.username else f"https://t.me/{chat.username}"
-        text = f"📡 **Your Target Channel Info**\n📛 Name: **{chat_title}**\n🆔 ID: `{channel_id}`\n🔗 Link: [Click Here]({link})"
+        text = (
+            f"📡 **Target Channel Info**\n"
+            f"📛 Name: **{chat_title}**\n"
+            f"🆔 ID: `{channel_id}`\n"
+            f"🔗 Link: [Click Here]({link})"
+        )
     except:
-        text = f"📡 **Current ID:** `{channel_id}`\n❌ Channel Access Error."
+        text = f"📡 **Current ID:** `{channel_id}`\n❌ Channel Error."
     bot.reply_to(message, text, parse_mode="Markdown")
+
+@bot.message_handler(commands=['auth'])
+def add_user(message):
+    if message.from_user.id != ADMIN_ID: return
+    try:
+        new_user_id = int(message.text.split()[1])
+        # Admin config ထဲမှာ Authorized list ကိုသိမ်းမယ်
+        config_col.update_one({"_id": str(ADMIN_ID)}, {"$addToSet": {"authorized_users": new_user_id}}, upsert=True)
+        bot.reply_to(message, f"✅ User ID `{new_user_id}` added to Database.")
+    except:
+        bot.reply_to(message, "⚠️ Usage: `/auth 123456789`")
+
+@bot.message_handler(commands=['unauth'])
+def remove_user(message):
+    if message.from_user.id != ADMIN_ID: return
+    try:
+        target_id = int(message.text.split()[1])
+        if target_id == ADMIN_ID: return
+        config_col.update_one({"_id": str(ADMIN_ID)}, {"$pull": {"authorized_users": target_id}})
+        bot.reply_to(message, f"🗑 User ID `{target_id}` removed from Database.")
+    except:
+        bot.reply_to(message, "Error.")
 
 @bot.message_handler(commands=['setcaption'])
 def set_custom_caption_text(message):
@@ -225,32 +251,37 @@ def set_custom_caption_text(message):
     try:
         caption_text = message.text.split(maxsplit=1)[1]
         update_user_setting(user_id, "custom_caption", caption_text)
-        bot.reply_to(message, f"✅ Your Custom Caption set to:\n\n`{caption_text}`", parse_mode="Markdown")
-    except IndexError:
-        bot.reply_to(message, "⚠️ Usage: `/setcaption Your Text Here`")
+        bot.reply_to(message, f"✅ ပုံသေစာသား သတ်မှတ်ပြီးပါပြီ:\n\n`{caption_text}`")
+    except:
+        bot.reply_to(message, "⚠️ Usage: `/setcaption Your Text`")
 
 @bot.message_handler(commands=['delcaption'])
 def delete_custom_caption_text(message):
     user_id = message.from_user.id
     if not is_authorized(user_id): return
     update_user_setting(user_id, "custom_caption", None)
-    bot.reply_to(message, "🗑 Your custom caption has been deleted.")
+    bot.reply_to(message, "🗑 ပုံသေစာသားကို ဖျက်လိုက်ပါပြီ။")
 
-@bot.message_handler(commands=['auth'])
-def add_user(message):
+@bot.message_handler(commands=['users'])
+def list_authorized_users(message):
     if message.from_user.id != ADMIN_ID: return
-    try:
-        new_user_id = int(message.text.split()[1])
-        config_col.update_one({"_id": str(ADMIN_ID)}, {"$addToSet": {"authorized_users": new_user_id}}, upsert=True)
-        bot.reply_to(message, f"✅ User ID `{new_user_id}` authorized.")
-    except:
-        bot.reply_to(message, "⚠️ Usage: `/auth 123456789`")
+    admin_cfg = get_user_config(ADMIN_ID)
+    user_list = admin_cfg.get('authorized_users', [])
+    text = f"👥 **Authorized Users Total: {len(user_list)}**\n"
+    text += "━━━━━━━━━━━━━━━━\n"
+    for uid in user_list:
+        try:
+            user = bot.get_chat(uid)
+            text += f"👤 {user.first_name}\n🆔 `{uid}`\n\n"
+        except:
+            text += f"👤 Unknown User\n🆔 `{uid}`\n\n"
+    bot.reply_to(message, text, parse_mode="Markdown")
 
 # ==========================================
-# BATCH & MESSAGE HANDLING
+# BATCH PROCESSING
 # ==========================================
 pending_files = {}
-batch_data = {}
+batch_data = {} 
 
 def process_batch(chat_id, user_id):
     if chat_id not in batch_data: return
@@ -259,7 +290,7 @@ def process_batch(chat_id, user_id):
     target_channel = cfg.get('channel_id')
 
     if len(messages) > 1:
-        bot.send_message(chat_id, f"✅ Processing {len(messages)} files for your channel...")
+        bot.send_message(chat_id, f"✅ {len(messages)} ကား လက်ခံရရှိသည်။ Channel သို့ ပို့နေပါပြီ...")
         for msg in messages:
             try:
                 original_caption = msg.caption if msg.caption else ""
@@ -267,13 +298,13 @@ def process_batch(chat_id, user_id):
                 final_caption = f"{original_caption}\n\n{custom_txt}"[:1024] if custom_txt else original_caption[:1024]
                 bot.copy_message(chat_id=target_channel, from_chat_id=chat_id, message_id=msg.message_id, caption=final_caption)
                 time.sleep(3)
-            except Exception as e: print(f"Error: {e}")
-        bot.send_message(chat_id, "📊 Batch process completed.")
+            except: pass
+        bot.send_message(chat_id, "📊 Batch ပို့ဆောင်မှု ပြီးဆုံးပါပြီ။")
     
     elif len(messages) == 1:
         msg = messages[0]
         pending_files[chat_id] = {'message_id': msg.message_id, 'from_chat_id': chat_id, 'user_id': user_id}
-        bot.reply_to(msg, "✏️ **Please send caption for this file...**")
+        bot.reply_to(msg, "✏️ **ဒီကားအတွက် Caption ရေးပို့ပေးပါ...**")
 
     if chat_id in batch_data: del batch_data[chat_id]
 
@@ -305,7 +336,7 @@ def receive_caption(message):
 
     try:
         bot.copy_message(chat_id=target_channel, from_chat_id=file_info['from_chat_id'], message_id=file_info['message_id'], caption=final_caption)
-        bot.reply_to(message, "✅ Sent to your channel.")
+        bot.reply_to(message, "✅ Channel သို့ ပို့ပြီးပါပြီ။")
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
     del pending_files[chat_id]
@@ -325,5 +356,5 @@ def handle_post_link(message):
 
 if __name__ == "__main__":
     keep_alive()
-    print("🤖 Multi-User Bot Started...")
+    print("🤖 Bot Started with MongoDB Support...")
     bot.infinity_polling()
