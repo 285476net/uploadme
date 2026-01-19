@@ -13,11 +13,11 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID'))
 MONGO_URL = os.getenv('MONGO_URL')
 
-# MongoDB Connection
+# MongoDB Connection (5 စက္ကန့်အတွင်း ချိတ်မရရင် timeout ပေးမည်)
 client = MongoClient(MONGO_URL, serverSelectionTimeoutMS=5000)
-db = client['telegram_bot_db'] # Database Name
-config_col = db['settings']    # Collection Name
-backup_logs = db['backup_logs'] # Backup လုပ်ပြီးသား ID တွေမှတ်ဖို့ Collection အသစ်
+db = client['telegram_bot_db']
+config_col = db['settings']    
+backup_logs = db['backup_logs']
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -62,7 +62,6 @@ def start_backup(message):
         skip_count = 0
         failed_ids = []
 
-        # DB မှ current config ယူရန်
         cfg = config_col.find_one({"_id": "bot_config"})
         custom_txt = cfg.get('custom_caption') if cfg else None
 
@@ -72,44 +71,28 @@ def start_backup(message):
                 continue
 
             success = False
-            # RETRY LOGIC: ၃ ကြိမ်အထိ ပြန်ကြိုးစားမည်
-            # RETRY LOGIC: ၃ ကြိမ်အထိ ပြန်ကြိုးစားမည်
             for attempt in range(3):
                 try:
-                    # Caption ကို တစ်ခါတည်း သတ်မှတ်ပေးလိုက်ခြင်း
                     bot.copy_message(
                         chat_id=target_chat,
                         from_chat_id=source_chat,
                         message_id=msg_id,
                         caption=custom_txt if custom_txt else None
                     )
-
                     log_backup(source_chat, target_chat, msg_id)
                     success_count += 1
                     success = True
                     break 
-
-                print(f"Error: {e}")
+                except Exception as e:
+                    print(f"Error: {e}")
                     if attempt < 2:
                         time.sleep(5) 
                     else:
                         fail_count += 1
                         failed_ids.append(str(msg_id))
 
-                    log_backup(source_chat, target_chat, msg_id)
-                    success_count += 1
-                    success = True
-                    break 
-
-                print(f"Error: {e}")
-                    if attempt < 2:
-                        time.sleep(5) # Connection ပြတ်လျှင် ၅ စက္ကန့်နားပြီး ပြန်စမ်းမည်
-                    else:
-                        fail_count += 1
-                        failed_ids.append(str(msg_id))
-
             if success:
-                time.sleep(2.5) # Stability အတွက် နားချိန်ပိုပေးထားသည်
+                time.sleep(2.5)
             
             if (success_count + skip_count + fail_count) % 5 == 0:
                 try:
@@ -131,7 +114,8 @@ def start_backup(message):
         if failed_ids:
             bot.send_message(message.chat.id, f"⚠️ **Error IDs:** `{', '.join(failed_ids[:30])}`")
 
-    print(f"Error: {e}")
+    except Exception as e:
+        print(f"Error: {e}")
         bot.reply_to(message, f"❌ Backup Error: {e}")
         
 @bot.message_handler(commands=['clearlogs'])
@@ -453,21 +437,16 @@ def receive_video(message):
 @bot.message_handler(func=lambda m: m.chat.id in pending_files, content_types=['text'])
 def receive_caption(message):
     if not is_authorized(message.from_user.id): return
-
     chat_id = message.chat.id
     user_input = message.text
     file_info = pending_files.get(chat_id)
     target_channel = current_config['channel_id']
-    
     if not file_info: return
 
     try:
         custom_txt = current_config.get('custom_caption')
-        
-        # User ပေးလိုက်တဲ့ စာသားနဲ့ ပုံသေစာသားကို ပေါင်းစပ်ခြင်း
         if custom_txt:
             final_caption = f"{user_input}\n\n{custom_txt}"
-            # 1024 characters ထက်ကျော်မသွားအောင် ဖြတ်ထုတ်ခြင်း
             if len(final_caption) > 1024:
                 max_input_len = 1024 - len(custom_txt) - 4
                 final_caption = f"{user_input[:max_input_len]}...\n\n{custom_txt}"
@@ -481,11 +460,12 @@ def receive_caption(message):
             caption=final_caption
         )
         bot.reply_to(message, "✅ Channel သို့ ပို့ပြီးပါပြီ။")
-    print(f"Error: {e}")
+    except Exception as e:
+        print(f"Error: {e}")
         bot.reply_to(message, f"❌ Error: {e}")
     
-    del pending_files[chat_id]
-
+    if chat_id in pending_files:
+        del pending_files[chat_id]
 # ==========================================
 # LINK HANDLING
 # ==========================================
@@ -524,18 +504,5 @@ if __name__ == "__main__":
     keep_alive()
     print("🤖 Bot Started with MongoDB Support...")
     bot.infinity_polling()
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
