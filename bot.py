@@ -39,6 +39,18 @@ def get_user_config(user_id):
         return new_data
     return data
 
+# BOT_TOKEN, ADMIN_ID တို့ရှိတဲ့နေရာအနီးမှာ ထည့်ပါ
+authorized_cache = set()
+
+def load_authorized_users():
+    """Bot စတက်ချိန်တွင် Database မှ Authorized Users များကို Cache ထဲသို့ ဆွဲတင်ရန်"""
+    global authorized_cache
+    admin_cfg = get_user_config(ADMIN_ID)
+    users = admin_cfg.get('authorized_users', [])
+    authorized_cache = set(users)
+    authorized_cache.add(ADMIN_ID) # Admin ကိုပါ ထည့်ထားရန်
+    print(f"✅ Loaded {len(authorized_cache)} authorized users to cache.")
+
 def update_user_setting(user_id, field, value):
     config_col.update_one({"_id": str(user_id)}, {"$set": {field: value}}, upsert=True)
 
@@ -182,10 +194,7 @@ def keep_alive():
 # ==========================================
 
 def is_authorized(user_id):
-    if user_id == ADMIN_ID: return True
-    # Admin ဆီမှာပဲ Authorized User List ကို သိမ်းထားမယ်
-    admin_cfg = get_user_config(ADMIN_ID)
-    return user_id in admin_cfg.get('authorized_users', [])
+    return user_id in authorized_cache
 
 @bot.message_handler(commands=['setchannel'])
 def set_channel(message):
@@ -227,9 +236,12 @@ def add_user(message):
     if message.from_user.id != ADMIN_ID: return
     try:
         new_user_id = int(message.text.split()[1])
-        # Admin config ထဲမှာ Authorized list ကိုသိမ်းမယ်
         config_col.update_one({"_id": str(ADMIN_ID)}, {"$addToSet": {"authorized_users": new_user_id}}, upsert=True)
-        bot.reply_to(message, f"✅ User ID `{new_user_id}` added to Database.")
+
+        # Cache ထဲသို့ အသစ်ထည့်ရန်
+        authorized_cache.add(new_user_id) 
+
+        bot.reply_to(message, f"✅ User ID `{new_user_id}` added and cache updated.")
     except:
         bot.reply_to(message, "⚠️ Usage: `/auth 123456789`")
 
@@ -240,7 +252,11 @@ def remove_user(message):
         target_id = int(message.text.split()[1])
         if target_id == ADMIN_ID: return
         config_col.update_one({"_id": str(ADMIN_ID)}, {"$pull": {"authorized_users": target_id}})
-        bot.reply_to(message, f"🗑 User ID `{target_id}` removed from Database.")
+
+        # Cache ထဲမှ ဖယ်ထုတ်ရန်
+        authorized_cache.discard(target_id) 
+
+        bot.reply_to(message, f"🗑 User ID `{target_id}` removed and cache updated.")
     except:
         bot.reply_to(message, "Error.")
 
@@ -355,6 +371,7 @@ def handle_post_link(message):
             bot.reply_to(message, f"❌ Error: {e}")
 
 if __name__ == "__main__":
+    load_authorized_users() # <--- ဒီနေရာမှာ ခေါ်ပေးပါ
     keep_alive()
     print("🤖 Bot Started with MongoDB Support...")
     bot.infinity_polling()
