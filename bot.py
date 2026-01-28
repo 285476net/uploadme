@@ -324,19 +324,6 @@ def process_batch(chat_id, user_id):
 
     if chat_id in batch_data: del batch_data[chat_id]
 
-@bot.message_handler(content_types=['video', 'document', 'photo', 'text'])
-def receive_video(message):
-    user_id = message.from_user.id
-    if not is_authorized(user_id): return
-    chat_id = message.chat.id
-    if chat_id in batch_data and batch_data[chat_id]['timer']:
-        batch_data[chat_id]['timer'].cancel()
-    if chat_id not in batch_data:
-        batch_data[chat_id] = {'messages': [], 'timer': None}
-    batch_data[chat_id]['messages'].append(message)
-    batch_data[chat_id]['timer'] = Timer(2.0, process_batch, [chat_id, user_id])
-    batch_data[chat_id]['timer'].start()
-
 @bot.message_handler(func=lambda m: m.chat.id in pending_files, content_types=['text'])
 def receive_caption(message):
     user_id = message.from_user.id
@@ -357,6 +344,23 @@ def receive_caption(message):
         bot.reply_to(message, f"❌ Error: {e}")
     del pending_files[chat_id]
 
+@bot.message_handler(content_types=['video', 'document', 'photo', 'text'])
+def receive_video(message):
+    user_id = message.from_user.id
+    if not is_authorized(user_id): return
+    chat_id = message.chat.id
+
+    if chat_id in pending_files:
+        return
+        
+    if chat_id in batch_data and batch_data[chat_id]['timer']:
+        batch_data[chat_id]['timer'].cancel()
+    if chat_id not in batch_data:
+        batch_data[chat_id] = {'messages': [], 'timer': None}
+    batch_data[chat_id]['messages'].append(message)
+    batch_data[chat_id]['timer'] = Timer(2.0, process_batch, [chat_id, user_id])
+    batch_data[chat_id]['timer'].start()
+
 @bot.message_handler(func=lambda m: m.text and "t.me/" in m.text)
 def handle_post_link(message):
     user_id = message.from_user.id
@@ -375,5 +379,6 @@ if __name__ == "__main__":
     keep_alive()
     print("🤖 Bot Started with MongoDB Support...")
     bot.infinity_polling()
+
 
 
